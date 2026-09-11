@@ -1,6 +1,6 @@
 # Publishing notice
 
-This repository is private. If it is ever made public, the boundaries below apply.
+This repository is public. The boundaries below apply.
 
 ## What can be public
 

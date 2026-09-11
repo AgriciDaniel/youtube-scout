@@ -52,7 +52,7 @@ main() {
     echo "note: openpyxl is not installed for python3. Run: python3 -m pip install --user openpyxl"
   fi
   if ! command -v yt-dlp >/dev/null 2>&1; then
-    echo "note: yt-dlp not found. --hooks and --download need it: python3 -m pip install --user yt-dlp"
+    echo "note: yt-dlp not found. --hooks, --download, and --transcribe need it: python3 -m pip install --user yt-dlp"
   fi
 }
 

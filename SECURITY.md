@@ -9,9 +9,10 @@ open a public issue for a vulnerability. You will get an acknowledgement within 
 ## Scope
 
 youtube-scout is a local command-line skill. It makes outbound HTTPS requests to
-`www.googleapis.com` (YouTube Data API v3) and, with `--hooks` or `--download`, runs `yt-dlp`
+`www.googleapis.com` (YouTube Data API v3) and, with `--hooks`, `--download`, or `--transcribe`, runs `yt-dlp`
 against `youtube.com`. It writes workbooks into the current directory and a probe cache under
-`~/.cache/scout/`. It never uploads anything.
+`~/.cache/scout/`. It never uploads anything. With `--transcribe`, Whisper downloads its speech model on first use
+and transcribes audio on your own machine.
 
 ## Credentials
 

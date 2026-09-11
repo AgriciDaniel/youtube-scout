@@ -1,6 +1,6 @@
 {
   "name": "youtube-scout",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "One topic in, one ranked YouTube research workbook out. Searches YouTube Data API v3, ranks videos by views, engagement, momentum, or breakout, and writes Videos, Channels, Summary, Comments, and Transcripts sheets with hooks and replay hotspots.",
   "author": {
     "name": "Daniel Agrici",
@@ -17,6 +17,6 @@
     "claude-skill"
   ],
   "skills": [
-    "./SKILL.md"
+    "./"
   ]
 }

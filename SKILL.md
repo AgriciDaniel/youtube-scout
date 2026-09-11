@@ -1,7 +1,7 @@
 ---
 name: scout
 description: Scout a topic on YouTube. Searches YouTube Data API v3 for the most relevant videos, ranks them by views (or engagement, likes, recency, momentum, breakout), and writes a research workbook in the OWT-Social-Ads layout with Videos, Channels, and Summary sheets, plus optional Comments and Transcripts (hooks, replay hotspots) sheets. Can also append into an existing sheet. Use when the user says "scout <topic>", wants a spreadsheet of top YouTube videos on a topic, wants creator or hook research, or wants YouTube rows added to their social ads sheet.
-argument-hint: "<topic> [--max 50] [--since month] [--length short] [--sort views] [--comments] [--hooks] [--into file.xlsx] [--download] [--dry-run]"
+argument-hint: "<topic> [--max 50] [--since month] [--length short] [--sort views] [--comments] [--hooks] [--transcribe] [--into file.xlsx] [--download [N]] [--dry-run]"
 allowed-tools: Bash, Read
 user-invocable: true
 ---
@@ -35,7 +35,7 @@ pip install -r "${CLAUDE_SKILL_DIR}/requirements.txt" --quiet
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--max N` | 50 | Videos to collect, 1 to 200. Each block of 50 costs 100 quota units and one of the 100 daily search calls. |
+| `--max N` | 50 | Videos to collect, 1 to 200. Each block of 50 uses one of the 100 daily search calls. |
 | `--since` | any | `hour`, `today`, `week`, `month`, `year`, `any` |
 | `--length` | any | `short` (under 4 min), `medium` (4 to 20), `long` (over 20) |
 | `--sort` | views | `views`, `engagement`, `likes`, `recent`, `momentum` (views per day), `breakout` (views per subscriber) |
@@ -43,7 +43,8 @@ pip install -r "${CLAUDE_SKILL_DIR}/requirements.txt" --quiet
 | `--hooks [SECONDS]` | off | yt-dlp probe per video, no quota: Hook (first SECONDS of captions, default 15), Vertical, FPS, Most Replayed s, Replay Hotspots, Chapters, and a Transcripts sheet with the full transcript. |
 | `--out PATH` | `./scout-<topic>-<date>.xlsx` | Write a new workbook |
 | `--into PATH` | off | Append into an existing workbook's `Videos` sheet, skip Video IDs already present, re-sort. Comments and Transcripts sheets are created or extended there too. A timestamped `.backup-` copy is written next to the file first. The file must be closed in Excel. |
-| `--download` | off | Download mp4s and thumbnails with yt-dlp into `./downloads/`, fill Local File and Thumbnail File |
+| `--download [N]` | off | Save thumbnails for every video (Thumbnail File) and mp4s for the top N (Local File) into `./downloads/`; all videos when N is omitted. Full downloads can be slow, so prefer a small N. |
+| `--transcribe [MODEL]` | off | Transcribe audio locally with Whisper for every video that has no caption transcript (default model `turbo`, GPU recommended). Uses the downloaded mp4 or fetches audio only. Fills Hook, Transcript Words, Transcript Source, and the Transcripts sheet. No quota, no caption requests. |
 | `--dry-run` | off | Fetch and print only |
 | `--json` | off | Also print rows as JSON |
 
@@ -59,7 +60,8 @@ The script prints a top-10 table to stdout and status lines to stderr. Relay:
 
 - The output path and the sheet list (or rows added and skipped for `--into`).
 - The top-10 table as-is in a code block.
-- Quota units used, and any `warning:` lines (a few yt-dlp probe failures are normal).
+- Quota used (search calls out of 100 a day, units out of 10,000 a day), and any `warning:`
+  lines (a few yt-dlp probe failures are normal).
 - Two or three observations worth acting on, read from the Summary sheet and the table: for
   example the Shorts share, a breakout creator (high Views/Sub), or a recurring hook pattern.
 
@@ -76,7 +78,7 @@ replay heatmap from `--hooks` is the closest public proxy for retention.
 | 0 | success | relay the report |
 | 1 | usage error | fix the flags and rerun |
 | 2 | no API key | export `YOUTUBE_API_KEY`, or put it in `~/.config/scout/.env`, or point `SCOUT_ENV_FILE` at the key file |
-| 3 | quota exhausted | resets at midnight Pacific; try a smaller `--max` tomorrow |
+| 3 | quota exhausted | the 100 daily searches or 10,000 daily units are used up; they reset at midnight Pacific |
 | 4 | invalid API key | check the `YOUTUBE_API_KEY` value in the key file |
 | 5 | other API or network error | show the message, suggest retry |
 | 6 | file error | the `--into` file is missing or openpyxl is not installed |
@@ -109,12 +111,14 @@ Thumbnail File without `--download`; the comment and hook columns without their 
 of the same topic (or a `--into` run on the same videos) only fetches what is missing. YouTube
 rate-limits caption downloads after bursts (HTTP 429); the script paces fetches 1.5 s apart and
 retries with backoff, and if some still fail it prints one warning with the count. Tell the
-user to rerun the same command in about an hour to fill the gaps. `SCOUT_CAPTION_DELAY` and
-`SCOUT_CACHE_DIR` override the pacing and cache location.
+user the block is per IP and can last hours: add `--transcribe` to fill the gaps locally, or rerun
+later. `SCOUT_CAPTION_DELAY`, `SCOUT_CACHE_DIR`, and `SCOUT_DOWNLOAD_FORMAT` override the pacing, cache location, and download format (default: 480p video and audio streams merged into mp4).
+For "cover every column" or a full demo, use `--comments --hooks --transcribe --download 10`.
 
 Usually blank, kept for the rare hit: AI Disclosure (YouTube only returns it in some cases),
 Live, Blocked Regions, Location, Paid Promotion. Tags are blank when the creator added none.
-- With `--download`: Thumbnail File (and Local File in column N).
+- With `--hooks` or `--transcribe`: Transcript Source says `captions` or `whisper` per row.
+- With `--download [N]`: Thumbnail File for every row, Local File (column N) for the top N.
 
 **Channels**: one row per channel in the sample, sorted by sample views: handle, subscribers,
 channel totals, country, created, videos in sample, sample views, sample average engagement,
@@ -126,7 +130,7 @@ range, top video, top channels, top tags, categories, languages, channel countri
 
 **Comments** (flag): Video ID, Handle, Title, Author, Comment, Likes, Replies, Published, link.
 
-**Transcripts** (flag): Video ID, Handle, Title, Language, Transcript Words, Hook, full
+**Transcripts** (flag): Video ID, Handle, Title, Language, Source, Transcript Words, Hook, full
 Transcript (capped at 32,000 characters), link.
 
 Header styling, frozen header, autofilter, number formats, and hyperlinks are reproduced on

@@ -5,14 +5,14 @@
   },
   "metadata": {
     "description": "youtube-scout: ranked YouTube research workbooks from one topic",
-    "version": "0.1.0"
+    "version": "0.2.0"
   },
   "plugins": [
     {
       "name": "youtube-scout",
       "source": "./",
       "description": "One topic in, one ranked YouTube research workbook out. Searches YouTube Data API v3, ranks videos by views, engagement, momentum, or breakout, and writes Videos, Channels, Summary, Comments, and Transcripts sheets with hooks and replay hotspots.",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "author": {
         "name": "Daniel Agrici"
       },

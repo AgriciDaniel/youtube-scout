@@ -234,6 +234,22 @@ def test_enrich_comments(monkeypatch, rows, comments_payload):
     assert comment_rows[0]["Author"] == "Ana" and comment_rows[0]["Replies"] == 4
 
 
+def test_quota_summary():
+    q = scout.Quota()
+    assert q.summary() == "0 search calls of 100 a day, 0 units of 10,000"
+    q.searches, q.units = 1, 3
+    assert q.summary() == "1 search call of 100 a day, 3 units of 10,000"
+
+
+def test_search_ids_counts_search_calls(monkeypatch):
+    pages = [{"items": [{"id": {"videoId": f"v{i}"}} for i in range(50)], "nextPageToken": "p2"},
+             {"items": [{"id": {"videoId": f"w{i}"}} for i in range(30)]}]
+    monkeypatch.setattr(scout, "yt_get", lambda ep, params, key: pages.pop(0))
+    q = scout.Quota()
+    ids = scout.search_ids("matcha", 80, "any", "any", "k", q)
+    assert len(ids) == 80 and q.searches == 2 and q.units == 0
+
+
 def test_fetch_comments_propagates_quota(monkeypatch):
     def fake_get(endpoint, params, api_key):
         raise scout.classify_error(403, {"error": {"errors": [{"reason": "quotaExceeded"}]}})
@@ -380,9 +396,9 @@ def test_build_channel_rows(rows):
 
 def test_build_summary(rows):
     args = scout.build_parser().parse_args(["matcha", "--comments", "--hooks"])
-    pairs = dict(scout.build_summary("matcha", args, scout.sort_rows(rows, "views"), 105,
+    pairs = dict(scout.build_summary("matcha", args, scout.sort_rows(rows, "views"), "1 search call of 100 a day, 5 units of 10,000",
                                      now=dt.datetime(2026, 9, 11, 12, 0)))
-    assert pairs["Topic"] == "matcha" and pairs["Videos"] == 3 and pairs["Quota units used"] == 105
+    assert pairs["Topic"] == "matcha" and pairs["Videos"] == 3 and pairs["Quota used"] == "1 search call of 100 a day, 5 units of 10,000"
     assert pairs["Filters"] == "max 50, since any, length any, sort views, comments 20, hooks 15.0s"
     assert pairs["Total views"] == 1025000 and pairs["Median views"] == 120000
     assert pairs["Shorts share"] == "33%" and pairs["Paid promotion share"] == "33%"
@@ -580,14 +596,14 @@ def test_cli_end_to_end_offline(monkeypatch, tmp_path, videos, channels, comment
     out, err = capsys.readouterr()
     assert calls == ["search", "videos", "channels", "videoCategories"]
     assert "quicksips" in out and "900,000" in out and "Short" in out
-    assert "Quota used: 103 units" in err
+    assert "Quota used: 1 search call of 100 a day, 3 units of 10,000." in err
     assert not list(tmp_path.glob("*.xlsx"))
 
     calls.clear()
     assert scout.run(["matcha", "recipe", "--comments", "5", "--hooks"]) == scout.EXIT_OK
     out, err = capsys.readouterr()
     assert calls.count("commentThreads") == 3
-    assert "Quota used: 106 units" in err
+    assert "Quota used: 1 search call of 100 a day, 6 units of 10,000." in err
     assert "warning: vid00000001: yt-dlp probe failed" in err
     written = list(tmp_path.glob("scout-matcha-recipe-*.xlsx"))
     assert len(written) == 1
@@ -607,3 +623,217 @@ def test_cli_end_to_end_offline(monkeypatch, tmp_path, videos, channels, comment
 def test_default_out_path():
     p = scout.default_out_path("Matcha Recipe!! 2026", dt.date(2026, 9, 11))
     assert p.name == "scout-matcha-recipe-2026-2026-09-11.xlsx"
+
+
+# --- local transcription (--transcribe) ---------------------------------------
+
+FAKE_RESULT = {
+    "backend": "whisper turbo (gpu)",
+    "language": "en",
+    "segments": [[0.0, 5.7, "Best SEO tools for 2025."], [5.7, 20.0, "Number one is free and it ranks."]],
+    "words": [[0.0, " Best"], [0.4, " SEO"], [0.8, " tools"], [1.2, " for"], [1.6, " 2025."],
+              [5.7, " Number"], [14.9, " one"], [15.2, " is"], [16.0, " free"]],
+}
+
+
+def test_hook_from_transcript():
+    assert scout.hook_from_transcript(FAKE_RESULT, 15) == "Best SEO tools for 2025. Number one"
+    assert scout.hook_from_transcript(FAKE_RESULT, 1) == "Best SEO tools"
+    no_words = {"segments": FAKE_RESULT["segments"], "words": []}
+    assert scout.hook_from_transcript(no_words, 5) == "Best SEO tools for 2025."
+
+
+def test_enrich_transcribe_fills_missing_and_labels_source(tmp_path, rows):
+    media = tmp_path / "downloads"
+    media.mkdir()
+    (media / "tealab_vid00000001.mp4").write_bytes(b"x")
+    rows = scout.sort_rows(rows, "views")
+    r = by_id(rows)
+    r["vid00000001"]["Local File"] = "tealab_vid00000001.mp4"
+    r["vid00000002"].update({"Hook": "from captions", "Transcript Words": 12, "Transcript Source": "captions"})
+    calls, fetched = [], []
+
+    def transcriber(path):
+        calls.append(path.name)
+        return FAKE_RESULT
+
+    def fetcher(row):
+        fetched.append(row["Video ID"])
+        f = tmp_path / f"{row['Video ID']}.m4a"
+        f.write_bytes(b"a")
+        return f
+
+    cache = tmp_path / "cache"
+    trows, warnings = scout.enrich_transcribe(rows, 15, transcriber, media_dir=media,
+                                              cache_dir=cache, audio_fetcher=fetcher)
+    assert warnings == []
+    assert calls == ["tealab_vid00000001.mp4", "vid00000003.m4a"]  # local mp4 used first
+    assert fetched == ["vid00000003"]                               # audio fetched only when needed
+    a, b = r["vid00000001"], r["vid00000002"]
+    assert a["Hook"] == "Best SEO tools for 2025. Number one" and a["Transcript Words"] == 12
+    assert a["Transcript Source"] == "whisper" and a["Language"] == "en"
+    assert b["Hook"] == "from captions" and b["Transcript Source"] == "captions"  # untouched
+    assert [t["Video ID"] for t in trows] == ["vid00000001", "vid00000003"]
+    assert list(trows[0].keys()) == scout.TRANSCRIPT_COLUMNS
+    assert trows[0]["Source"] == "whisper (whisper turbo (gpu))"
+
+    # second pass reuses the cache: no transcription, no audio fetch
+    for key in ("vid00000001", "vid00000003"):
+        r[key]["Transcript Words"] = None
+    calls.clear()
+    fetched.clear()
+    scout.enrich_transcribe(rows, 15, transcriber, media_dir=media, cache_dir=cache, audio_fetcher=fetcher)
+    assert calls == [] and fetched == []
+
+
+def test_enrich_transcribe_warnings(tmp_path, rows):
+    def boom(path):
+        raise RuntimeError("cuda")
+    trows, warnings = scout.enrich_transcribe(rows, 15, boom, cache_dir=tmp_path,
+                                              audio_fetcher=lambda row: None)
+    assert trows == [] and len(warnings) == 3 and all("no audio" in w for w in warnings)
+    f = tmp_path / "a.m4a"
+    f.write_bytes(b"a")
+    trows, warnings = scout.enrich_transcribe(rows, 15, boom, cache_dir=tmp_path,
+                                              audio_fetcher=lambda row: f)
+    assert trows == [] and all("transcription failed (RuntimeError)" in w for w in warnings)
+    silent = {"backend": "x", "language": "", "segments": [], "words": []}
+    scout.enrich_transcribe(rows, 15, lambda p: silent, cache_dir=tmp_path / "c2", audio_fetcher=lambda row: f)
+    assert all(r["Transcript Source"] == "no speech" and not r["Hook"] for r in rows)
+
+
+def test_fetch_audio_reuses_existing_and_handles_failure(tmp_path):
+    (tmp_path / "abc123.m4a").write_bytes(b"a")
+    assert scout.fetch_audio("u", "abc123", tmp_path, runner=lambda c: 1 / 0) == tmp_path / "abc123.m4a"
+
+    def ok(cmd):
+        assert "bestaudio[ext=m4a]/bestaudio" in cmd
+        (tmp_path / "zzz999.webm.part").write_bytes(b"partial")
+        (tmp_path / "zzz999.webm").write_bytes(b"a")
+    assert scout.fetch_audio("u", "zzz999", tmp_path, runner=ok) == tmp_path / "zzz999.webm"
+
+    def fail(cmd):
+        raise scout.subprocess.CalledProcessError(1, cmd)
+    assert scout.fetch_audio("u", "nope00", tmp_path, runner=fail) is None
+
+
+def test_transcriber_without_backends(monkeypatch):
+    import builtins
+    real_import = builtins.__import__
+
+    def fake_import(name, *a, **k):
+        if name in ("torch", "whisper", "faster_whisper"):
+            raise ImportError(name)
+        return real_import(name, *a, **k)
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    with pytest.raises(scout.ScoutError) as exc:
+        scout.Transcriber()(scout.Path("x.m4a"))
+    assert exc.value.code == scout.EXIT_FILE and "--transcribe" in str(exc.value)
+
+
+def test_download_limit(tmp_path, monkeypatch):
+    rows = [{"Video ID": f"v{i}", "Handle": "h", "Thumbnail": f"https://t/{i}.jpg",
+             "Video Link": f"https://www.youtube.com/watch?v=v{i}"} for i in range(4)]
+    thumbs, videos = [], []
+    monkeypatch.setattr(scout, "_download_file", lambda url, path: thumbs.append(path.name) or path.write_bytes(b"j") or True)
+
+    def fake_run(cmd, **kw):
+        videos.append(cmd[-1])
+        out = cmd[cmd.index("-o") + 1].replace("%(ext)s", "mp4")
+        scout.Path(out).write_bytes(b"v")
+    monkeypatch.setattr(scout.subprocess, "run", fake_run)
+    assert scout.download_videos(rows, tmp_path, 2) == []
+    assert thumbs == [f"h_v{i}.jpg" for i in range(4)]            # every thumbnail
+    assert sorted(v[-2:] for v in videos) == ["v0", "v1"]       # only the top 2 videos
+    assert [r.get("Local File") for r in rows] == ["h_v0.mp4", "h_v1.mp4", None, None]
+    assert all(r["Thumbnail File"] for r in rows)
+    parser = scout.build_parser()
+    assert parser.parse_args(["x"]).download is None
+    assert parser.parse_args(["x", "--download"]).download == 0
+    assert parser.parse_args(["x", "--download", "10"]).download == 10
+
+
+def test_download_video_uses_merged_format(tmp_path, monkeypatch):
+    seen = {}
+
+    def fake_run(cmd, **kw):
+        seen["cmd"], seen["timeout"] = cmd, kw["timeout"]
+        scout.Path(cmd[cmd.index("-o") + 1].replace("%(ext)s", "mp4")).write_bytes(b"v")
+    monkeypatch.setattr(scout.subprocess, "run", fake_run)
+    row = {"Video ID": "abc", "Handle": "h", "Video Link": "https://www.youtube.com/watch?v=abc",
+           "Duration s": 5216.0}
+    assert scout._download_video(row, tmp_path) == ("h_abc.mp4", None)
+    assert seen["cmd"][seen["cmd"].index("-f") + 1] == scout.DOWNLOAD_FORMAT
+    assert "--merge-output-format" in seen["cmd"] and "height<=480" in scout.DOWNLOAD_FORMAT
+    assert seen["timeout"] == 5216.0 * 1.5          # long video, long timeout
+    assert scout._media_timeout({"Duration s": 30}, 600) == 600
+
+
+def test_enrich_transcribe_retries_with_audio_when_local_file_fails(tmp_path, rows):
+    media = tmp_path / "downloads"
+    media.mkdir()
+    (media / "silent.mp4").write_bytes(b"x")
+    row = rows[0]
+    row["Local File"] = "silent.mp4"
+    audio = tmp_path / "a.m4a"
+    audio.write_bytes(b"a")
+
+    def transcriber(path):
+        if path.name == "silent.mp4":
+            raise RuntimeError("Output file does not contain any stream")
+        return FAKE_RESULT
+    trows, warnings = scout.enrich_transcribe([row], 15, transcriber, media_dir=media,
+                                              cache_dir=tmp_path / "c", audio_fetcher=lambda r: audio)
+    assert warnings == [] and row["Transcript Source"] == "whisper" and len(trows) == 1
+
+
+def test_hooks_warning_mentions_transcribe_when_active(rows):
+    def prober(url, s, fetch=True):
+        return {"Vertical": "yes", "_rate_limited": True}
+    _, w = scout.enrich_hooks(rows, 15, prober=prober, delay_s=0, transcribe_after=True)
+    assert len(w) == 1 and "--transcribe fills them locally" in w[0]
+    _, w = scout.enrich_hooks(rows, 15, prober=prober, delay_s=0)
+    assert "Add --transcribe" in w[0]
+
+
+def test_fit_whisper_model():
+    assert scout.fit_whisper_model("turbo", 12.0) == "turbo"
+    assert scout.fit_whisper_model("turbo", 2.4) == "small"      # busy GPU steps down
+    assert scout.fit_whisper_model("turbo", 1.3) == "tiny"
+    assert scout.fit_whisper_model("turbo", 0.5) is None
+    assert scout.fit_whisper_model("small", 2.4) == "small"
+
+
+def test_transcriber_falls_back_to_cpu_on_oom(monkeypatch):
+    t = scout.Transcriber()
+
+    class GpuModel:
+        def transcribe(self, *a, **k):
+            raise RuntimeError("CUDA out of memory. Tried to allocate 20.00 MiB")
+
+    class CpuModel:
+        def transcribe(self, *a, **k):
+            return {"language": "en", "segments": [{"start": 0.0, "end": 2.0, "text": " hi there",
+                                                    "words": [{"start": 0.0, "word": " hi"}]}]}
+
+    t._m, t._kind, t.backend = GpuModel(), "openai", "whisper turbo (gpu)"
+
+    def fake_cpu():
+        t._m, t._kind, t.backend = CpuModel(), "openai-cpu", "whisper small (cpu)"
+    monkeypatch.setattr(t, "_fallback_to_cpu", fake_cpu)
+    out = t(scout.Path("x.m4a"))
+    assert out["backend"] == "whisper small (cpu)" and out["segments"] == [[0.0, 2.0, "hi there"]]
+
+    class Broken:
+        def transcribe(self, *a, **k):
+            raise ValueError("bad file")
+    t._m, t._kind = Broken(), "openai"
+    with pytest.raises(ValueError):
+        t(scout.Path("x.m4a"))
+
+
+def test_cli_transcribe_flag():
+    args = scout.build_parser().parse_args(["matcha", "--transcribe"])
+    assert args.transcribe == "turbo"
+    assert scout.build_parser().parse_args(["matcha", "--transcribe", "small"]).transcribe == "small"
+    assert scout.build_parser().parse_args(["matcha"]).transcribe is None

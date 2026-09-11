@@ -1,5 +1,5 @@
-blank_issues_enabled: false
+blank_issues_enabled: true
 contact_links:
-  - name: Feature idea or question
-    url: https://github.com/AgriciDaniel/youtube-scout/discussions
-    about: Use discussions for ideas and usage questions once they are enabled, otherwise open an issue.
+  - name: Community questions
+    url: https://www.skool.com/ai-marketing-hub
+    about: Usage questions and ideas are welcome in the free AI Marketing Hub community.

@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SELF = Path(__file__).resolve()
 
 # Built from fragments so this file does not trip its own checks.
-EM_DASH = "—"
+EM_DASH = "\u2014"
 LOCAL_PATHS = ["/var" + "/home/", "/home/", "/Users/", "Desktop" + "/Keys", "agricidaniel@"]
 CREDENTIAL = re.compile(
     r"AIza[0-9A-Za-z_-]{35}|ghp_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{40,}|gh[ous]_[A-Za-z0-9]{36}"
@@ -81,7 +81,7 @@ def test_versions_agree():
 def test_plugin_manifest_shape():
     plugin = json.loads((ROOT / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
     assert plugin["name"] == "youtube-scout" and plugin["license"] == "MIT"
-    assert plugin["skills"] == ["./SKILL.md"]
+    assert plugin["skills"] == ["./"]
     assert (ROOT / "SKILL.md").exists() and (ROOT / "LICENSE").exists()
     skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
     assert skill.startswith("---\nname: scout\n")

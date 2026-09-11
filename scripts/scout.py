@@ -2,12 +2,13 @@
 """scout: search YouTube for one topic and write a ranked research workbook.
 
 Pipeline (mirrors the YouTube Pro app's server/youtube.ts, then goes further):
-  search.list          -> relevant video ids (100 quota units per page of 50)
+  search.list          -> relevant video ids (1 of 100 daily search calls per page of 50)
   videos.list          -> stats, duration, status, topics, recording (1 unit per 50)
   channels.list        -> handle, subscribers, country, keywords (1 unit per 50)
   videoCategories.list -> category names (1 unit per run)
   commentThreads.list  -> top comments, only with --comments (1 unit per video)
   yt-dlp               -> hook transcript, vertical, replay heatmap, only with --hooks (no quota)
+  local Whisper        -> transcripts from the audio when captions are missing, --transcribe
 
 Sheets: Videos (OWT-Social-Ads layout plus extras), Channels, Summary, and with flags
 Comments and Transcripts. Only openpyxl is required beyond the standard library.
@@ -28,6 +29,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from copy import copy
 from pathlib import Path
 
@@ -59,6 +61,13 @@ CACHE_DIR = Path(os.environ.get("SCOUT_CACHE_DIR", Path.home() / ".cache" / "sco
 CACHE_TTL_S = 7 * 86400
 CAPTION_DELAY_S = float(os.environ.get("SCOUT_CAPTION_DELAY", "1.5"))
 CAPTION_BACKOFF_S = (15.0, 45.0)
+# Separate video and audio streams merged by ffmpeg. YouTube's single-file mp4 is throttled
+# hard and missing for many videos, so it is only the last resort.
+DOWNLOAD_FORMAT = os.environ.get(
+    "SCOUT_DOWNLOAD_FORMAT",
+    "bv*[height<=480][ext=mp4]+ba[ext=m4a]/bv*[height<=480]+ba/b[height<=480]/b")
+DOWNLOAD_WORKERS = 3
+AUDIO_WORKERS = 4
 
 # Exit codes
 EXIT_OK = 0
@@ -89,7 +98,7 @@ EXTRA_COLUMNS = [
     "Top Comment", "Top Comment Likes", "Comments Off",
     # --hooks
     "Hook", "Vertical", "FPS", "Most Replayed s", "Replay Hotspots", "Chapters",
-    "Transcript Words",
+    "Transcript Words", "Transcript Source",
     # --download
     "Thumbnail File",
 ]
@@ -101,7 +110,7 @@ OPTIONAL_COLUMNS = {
     "Shares", "Spark Code", "Local File", "Sheet Views", "Ad Status", "Thumbnail File",
     "Top Comment", "Top Comment Likes", "Comments Off",
     "Hook", "Vertical", "FPS", "Most Replayed s", "Replay Hotspots", "Chapters",
-    "Transcript Words",
+    "Transcript Words", "Transcript Source",
 }
 
 CHANNEL_COLUMNS = [
@@ -115,7 +124,7 @@ COMMENT_COLUMNS = [
     "Video Link",
 ]
 TRANSCRIPT_COLUMNS = [
-    "Video ID", "Handle", "Title", "Language", "Transcript Words", "Hook", "Transcript",
+    "Video ID", "Handle", "Title", "Language", "Source", "Transcript Words", "Hook", "Transcript",
     "Video Link",
 ]
 
@@ -136,7 +145,7 @@ COLUMN_WIDTHS = {
     "Topics": 24.0, "Blocked Regions": 14.0, "Description": 50.0, "Desc Links": 10.0,
     "Location": 20.0, "Thumbnail": 24.0,
     "Top Comment": 50.0, "Top Comment Likes": 16.0, "Comments Off": 12.0,
-    "Hook": 60.0, "Vertical": 8.0, "FPS": 5.0, "Most Replayed s": 15.0,
+    "Hook": 60.0, "Vertical": 8.0, "FPS": 5.0, "Most Replayed s": 15.0, "Transcript Source": 17.0, "Source": 16.0,
     "Replay Hotspots": 18.0, "Chapters": 9.0, "Transcript Words": 16.0, "Thumbnail File": 24.0,
     "Videos in Sample": 15.0, "Sample Views": 13.0, "Sample Avg Eng %": 16.0,
     "Best Video": 40.0, "Best Video Views": 15.0, "Best Video Link": 28.0,
@@ -316,8 +325,23 @@ def chunked(items: list, size: int = 50):
 # --------------------------------------------------------------------------- #
 
 class Quota:
+    """Tracks YouTube Data API usage under the granular quota system (June 2026).
+
+    search.list draws from its own bucket of 100 calls a day; every other read
+    method used here costs 1 unit from the shared 10,000 units a day.
+    """
+
+    SEARCH_DAILY = 100
+    UNITS_DAILY = 10_000
+
     def __init__(self) -> None:
+        self.searches = 0
         self.units = 0
+
+    def summary(self) -> str:
+        calls = "call" if self.searches == 1 else "calls"
+        return (f"{self.searches} search {calls} of {self.SEARCH_DAILY} a day, "
+                f"{self.units} units of {self.UNITS_DAILY:,}")
 
 
 def search_ids(topic: str, max_results: int, since: str, length: str,
@@ -341,7 +365,7 @@ def search_ids(topic: str, max_results: int, since: str, length: str,
         if page_token:
             params["pageToken"] = page_token
         data = yt_get("search", params, api_key)
-        quota.units += 100
+        quota.searches += 1
         for item in data.get("items", []):
             vid = (item.get("id") or {}).get("videoId")
             if vid and vid not in seen:
@@ -879,6 +903,7 @@ def build_rows(videos: list[dict], channels: dict[str, dict],
             "Replay Hotspots": None,
             "Chapters": None,
             "Transcript Words": None,
+            "Transcript Source": None,
             "Thumbnail File": None,
         })
     return rows
@@ -945,7 +970,8 @@ def enrich_comments(rows: list[dict], limit: int, api_key: str, quota: Quota,
 
 def enrich_hooks(rows: list[dict], hook_seconds: float, progress=None,
                  prober=None, cache_dir: Path | None = None,
-                 delay_s: float = CAPTION_DELAY_S, sleeper=None) -> tuple[list[dict], list[str]]:
+                 delay_s: float = CAPTION_DELAY_S, sleeper=None,
+                 transcribe_after: bool = False) -> tuple[list[dict], list[str]]:
     prober = prober or (lambda url, s, fetch=True: probe_video(
         url, s, cache_dir=cache_dir, fetch_captions=fetch))
     sleeper = sleeper or time.sleep
@@ -975,11 +1001,13 @@ def enrich_hooks(rows: list[dict], hook_seconds: float, progress=None,
         if row.get("Vertical") == "no" and row.get("Format") == "Short":
             row["Format"] = "Video"
         if info.get("Transcript"):
+            row["Transcript Source"] = "captions"
             transcript_rows.append({
                 "Video ID": row["Video ID"],
                 "Handle": row["Handle"],
                 "Title": row["Title"],
                 "Language": info.get("Language", ""),
+                "Source": "captions",
                 "Transcript Words": info.get("Transcript Words"),
                 "Hook": info.get("Hook", ""),
                 "Transcript": info["Transcript"][:EXCEL_CELL_MAX],
@@ -987,51 +1015,311 @@ def enrich_hooks(rows: list[dict], hook_seconds: float, progress=None,
             })
         if progress and i % 5 == 0:
             progress(f"hooks {i}/{len(rows)}")
-    if rate_limited:
+    if rate_limited and transcribe_after:
+        warnings.append(
+            f"captions rate-limited by YouTube for {rate_limited} videos (HTTP 429); "
+            f"--transcribe fills them locally, see the Transcript Source column.")
+    elif rate_limited:
         warnings.append(
             f"captions rate-limited by YouTube for {rate_limited} videos (HTTP 429). "
-            f"Rerun the same command in an hour; cached results are reused so only the "
-            f"missing captions are fetched.")
+            f"The block can last hours. Add --transcribe to fill them locally with Whisper, or "
+            f"rerun later; cached results are reused so only the missing captions are fetched.")
     return transcript_rows, warnings
 
 
-def download_videos(rows: list[dict], out_dir: Path) -> list[str]:
+# --------------------------------------------------------------------------- #
+# Local transcription (--transcribe): no YouTube caption requests at all
+# --------------------------------------------------------------------------- #
+
+HOOK_WORDS_WINDOW_S = 120.0
+
+
+# Rough GPU memory each OpenAI whisper model needs, in GiB, including working memory.
+WHISPER_GPU_GIB = {"tiny": 1.0, "base": 1.2, "small": 2.0, "medium": 5.0, "turbo": 6.0,
+                   "large": 10.0, "large-v3": 10.0}
+
+
+def fit_whisper_model(requested: str, free_gib: float) -> str | None:
+    """Largest model, starting from the requested one, that fits in the free GPU memory."""
+    ladder = [requested] + [m for m in ("small", "base", "tiny")
+                            if WHISPER_GPU_GIB[m] < WHISPER_GPU_GIB.get(requested, 6.0)]
+    for name in ladder:
+        if WHISPER_GPU_GIB.get(name, 6.0) <= free_gib * 0.9:
+            return name
+    return None
+
+
+def _is_oom(exc: Exception) -> bool:
+    return "out of memory" in str(exc).lower() or type(exc).__name__ == "OutOfMemoryError"
+
+
+class Transcriber:
+    """Local speech-to-text. OpenAI whisper on CUDA, sized to the free GPU memory; else
+    faster-whisper on CPU (int8); else OpenAI whisper on CPU. Loaded lazily on first use,
+    and moved to the CPU if the GPU runs out of memory mid-run."""
+
+    def __init__(self, model: str = "turbo") -> None:
+        self.model = model
+        self.backend = ""
+        self._kind = ""
+        self._m = None
+
+    def _load(self) -> None:
+        if self._m is not None:
+            return
+        errors: list[str] = []
+        try:
+            import torch
+            import whisper
+            if torch.cuda.is_available():
+                free_gib = torch.cuda.mem_get_info()[0] / 2**30
+                name = fit_whisper_model(self.model, free_gib)
+                if name:
+                    self._m = whisper.load_model(name, device="cuda")
+                    self._kind, self.backend = "openai", f"whisper {name} (gpu)"
+                    return
+                errors.append(f"gpu: only {free_gib:.1f} GiB free")
+        except Exception as exc:  # noqa: BLE001 - try the next backend
+            errors.append(f"whisper: {type(exc).__name__}")
+        self._load_cpu(errors)
+
+    def _load_cpu(self, errors: list[str] | None = None) -> None:
+        errors = errors if errors is not None else []
+        name = {"turbo": "small", "large": "small", "large-v3": "small"}.get(self.model, self.model)
+        try:
+            from faster_whisper import WhisperModel
+            self._m = WhisperModel(name, device="cpu", compute_type="int8")
+            self._kind, self.backend = "faster", f"faster-whisper {name} (cpu)"
+            return
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"faster-whisper: {type(exc).__name__}")
+        try:
+            import whisper
+            self._m = whisper.load_model(name, device="cpu")
+            self._kind, self.backend = "openai-cpu", f"whisper {name} (cpu)"
+            return
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"whisper cpu: {type(exc).__name__}")
+        raise ScoutError(
+            "No local speech-to-text available for --transcribe. Install openai-whisper "
+            "(GPU) or faster-whisper (CPU). Tried: " + ", ".join(errors), EXIT_FILE)
+
+    def _fallback_to_cpu(self) -> None:
+        self._m = None
+        try:
+            import torch
+            torch.cuda.empty_cache()
+        except Exception:  # noqa: BLE001
+            pass
+        self._load_cpu()
+
+    def __call__(self, path: Path) -> dict:
+        self._load()
+        try:
+            return self._transcribe(path)
+        except Exception as exc:  # noqa: BLE001
+            if self._kind == "openai" and _is_oom(exc):
+                self._fallback_to_cpu()
+                return self._transcribe(path)
+            raise
+
+    def _transcribe(self, path: Path) -> dict:
+        if self._kind == "faster":
+            segs, info = self._m.transcribe(str(path), vad_filter=True, word_timestamps=True)
+            segs = list(segs)
+            segments = [[round(s.start, 2), round(s.end, 2), s.text.strip()] for s in segs]
+            words = [[round(w.start, 2), w.word] for s in segs for w in (s.words or [])]
+            language = info.language or ""
+        else:
+            import warnings
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                r = self._m.transcribe(str(path), word_timestamps=True,
+                                       fp16=self._kind == "openai", verbose=None)
+            segments = [[round(s["start"], 2), round(s["end"], 2), s["text"].strip()]
+                        for s in r.get("segments", [])]
+            words = [[round(w["start"], 2), w["word"]]
+                     for s in r.get("segments", []) for w in s.get("words", [])]
+            language = r.get("language") or ""
+        return {
+            "backend": self.backend,
+            "language": language,
+            "segments": segments,
+            "words": [w for w in words if w[0] < HOOK_WORDS_WINDOW_S],
+        }
+
+
+def hook_from_transcript(result: dict, hook_seconds: float) -> str:
+    words = result.get("words") or []
+    if words:
+        text = "".join(w[1] for w in words if w[0] < hook_seconds)
+    else:
+        text = " ".join(s[2] for s in result.get("segments", []) if s[0] < hook_seconds)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def fetch_audio(video_url: str, video_id: str, out_dir: Path, runner=None,
+                timeout: float = 900) -> Path | None:
+    """Download audio only (no captions endpoint involved). Returns the file or None."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    existing = sorted(f for f in out_dir.glob(f"{video_id}.*") if f.suffix not in (".part", ".ytdl"))
+    if existing:
+        return existing[0]
+    cmd = ["yt-dlp", "-f", "bestaudio[ext=m4a]/bestaudio", "--no-playlist", "--quiet",
+           "--no-warnings", "-o", str(out_dir / f"{video_id}.%(ext)s"), video_url]
+    run = runner or (lambda c: subprocess.run(c, check=True, timeout=timeout,
+                                              stdout=subprocess.DEVNULL, stderr=subprocess.PIPE))
+    try:
+        run(cmd)
+    except (FileNotFoundError, subprocess.TimeoutExpired, subprocess.CalledProcessError):
+        return None
+    found = sorted(f for f in out_dir.glob(f"{video_id}.*") if f.suffix not in (".part", ".ytdl"))
+    return found[0] if found else None
+
+
+def enrich_transcribe(rows: list[dict], hook_seconds: float, transcriber, *,
+                      media_dir: Path | None = None, cache_dir: Path | None = None,
+                      audio_fetcher=None, progress=None) -> tuple[list[dict], list[str]]:
+    """Fill Hook, Transcript Words, and a Transcripts row for every video that has no
+    caption transcript yet, by transcribing its audio locally. Audio for videos without a
+    local file is fetched a few at a time in the background while transcription runs."""
+    todo = [r for r in rows if not r.get("Transcript Words")]
+    transcript_rows: list[dict] = []
+    warnings: list[str] = []
+    audio_dir = (cache_dir or CACHE_DIR) / "audio"
+    fetch = audio_fetcher or (lambda row: fetch_audio(
+        row["Video Link"], row["Video ID"], audio_dir, timeout=_media_timeout(row, 900)))
+
+    def local_media(row: dict) -> Path | None:
+        if media_dir and row.get("Local File"):
+            candidate = media_dir / str(row["Local File"])
+            return candidate if candidate.exists() else None
+        return None
+
+    need_audio = [r for r in todo if not (cache_read(r["Video ID"], cache_dir) or {}).get("whisper")
+                  and local_media(r) is None]
+    pool = ThreadPoolExecutor(max_workers=AUDIO_WORKERS)
+    pending = {r["Video ID"]: pool.submit(fetch, r) for r in need_audio}
+    try:
+        for i, row in enumerate(todo, start=1):
+            vid = row["Video ID"]
+            cached = cache_read(vid, cache_dir) or {}
+            result = cached.get("whisper")
+            if not result:
+                media = local_media(row)
+                if media is None and vid in pending:
+                    try:
+                        media = pending[vid].result()
+                    except Exception:  # noqa: BLE001 - a failed fetch is reported below
+                        media = None
+                if not media:
+                    warnings.append(f"{vid}: no audio available to transcribe")
+                    continue
+                try:
+                    result = transcriber(media)
+                except ScoutError:
+                    raise
+                except Exception as exc:  # noqa: BLE001 - one bad file should not stop the run
+                    # A local video can lack an audio track; fetch the audio and try once more.
+                    retry = fetch(row) if media == local_media(row) else None
+                    try:
+                        if not retry:
+                            raise exc
+                        result = transcriber(retry)
+                    except ScoutError:
+                        raise
+                    except Exception as exc2:  # noqa: BLE001
+                        warnings.append(f"{vid}: transcription failed ({type(exc2).__name__})")
+                        continue
+                cached["whisper"] = result
+                cache_write(vid, cache_dir, cached)
+            full = " ".join(seg[2] for seg in result.get("segments", [])).strip()
+            if not full:
+                row["Transcript Source"] = "no speech"
+                continue
+            hook = hook_from_transcript(result, hook_seconds)
+            row["Hook"] = hook
+            row["Transcript Words"] = len(full.split())
+            row["Transcript Source"] = "whisper"
+            if result.get("language") and not row.get("Language"):
+                row["Language"] = result["language"]
+            transcript_rows.append({
+                "Video ID": vid,
+                "Handle": row.get("Handle"),
+                "Title": row.get("Title"),
+                "Language": result.get("language", ""),
+                "Source": f"whisper ({result.get('backend', '')})".replace(" ()", ""),
+                "Transcript Words": row["Transcript Words"],
+                "Hook": hook,
+                "Transcript": full[:EXCEL_CELL_MAX],
+                "Video Link": row.get("Video Link"),
+            })
+            if progress and i % 5 == 0:
+                progress(f"transcribed {i}/{len(todo)}")
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
+    return transcript_rows, warnings
+
+
+def _media_timeout(row: dict, floor: float) -> float:
+    """Allow long videos more time than short ones."""
+    try:
+        return max(floor, float(row.get("Duration s") or 0) * 1.5)
+    except (TypeError, ValueError):
+        return floor
+
+
+def _download_video(row: dict, out_dir: Path) -> tuple[str | None, str | None]:
+    """Download one video. Returns (local file name, warning)."""
+    vid = row["Video ID"]
+    stem = f"{row.get('Handle') or 'youtube'}_{vid}"
+    target = out_dir / f"{stem}.mp4"
+    if target.exists():
+        return target.name, None
+    cmd = [
+        "yt-dlp", "-f", DOWNLOAD_FORMAT, "--merge-output-format", "mp4", "--no-playlist",
+        "--quiet", "--no-warnings", "-o", str(out_dir / f"{stem}.%(ext)s"), row["Video Link"],
+    ]
+    try:
+        subprocess.run(cmd, check=True, timeout=_media_timeout(row, 600),
+                       stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    except FileNotFoundError:
+        return None, "yt-dlp is not installed; skipped downloads."
+    except subprocess.TimeoutExpired:
+        return None, f"{vid}: download timed out"
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or b"").decode("utf-8", "replace").strip().splitlines()
+        return None, f"{vid}: {detail[-1] if detail else 'download failed'}"
+    found = sorted(f for f in out_dir.glob(f"{stem}.*")
+                   if f.suffix not in (".jpg", ".part", ".ytdl"))
+    return (found[0].name, None) if found else (None, f"{vid}: download produced no file")
+
+
+def download_videos(rows: list[dict], out_dir: Path, video_limit: int | None = None) -> list[str]:
+    """Save thumbnails for every row and videos for the first `video_limit` rows (all when None).
+
+    Thumbnails are small and fetched one by one; videos download a few at a time.
+    """
     warnings: list[str] = []
     out_dir.mkdir(parents=True, exist_ok=True)
+    limit = len(rows) if not video_limit or video_limit < 0 else video_limit
     for row in rows:
-        vid = row["Video ID"]
-        handle = row.get("Handle") or "youtube"
-        stem = f"{handle}_{vid}"
-        # thumbnail first, it is cheap
         thumb_url = row.get("Thumbnail") or ""
         if thumb_url:
-            thumb_path = out_dir / f"{stem}.jpg"
-            if thumb_path.exists() or _download_file(thumb_url, thumb_path):
+            thumb_path = out_dir / f"{row.get('Handle') or 'youtube'}_{row['Video ID']}.jpg"
+            if (thumb_path.exists() or _download_file(thumb_url, thumb_path)
+                    or _download_file(thumb_url, thumb_path)):
                 row["Thumbnail File"] = thumb_path.name
-        target = out_dir / f"{stem}.mp4"
-        if target.exists():
-            row["Local File"] = target.name
-            continue
-        cmd = [
-            "yt-dlp", "-f", "mp4/best", "--no-playlist", "--quiet", "--no-warnings",
-            "-o", str(out_dir / f"{stem}.%(ext)s"), row["Video Link"],
-        ]
-        try:
-            subprocess.run(cmd, check=True, timeout=600,
-                           stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-        except FileNotFoundError:
-            warnings.append("yt-dlp is not installed; skipped downloads.")
-            break
-        except subprocess.TimeoutExpired:
-            warnings.append(f"{vid}: download timed out")
-            continue
-        except subprocess.CalledProcessError as exc:
-            detail = (exc.stderr or b"").decode("utf-8", "replace").strip().splitlines()
-            warnings.append(f"{vid}: {detail[-1] if detail else 'download failed'}")
-            continue
-        found = sorted(p for p in out_dir.glob(f"{stem}.*") if p.suffix != ".jpg")
-        if found:
-            row["Local File"] = found[0].name
+            else:
+                warnings.append(f"{row['Video ID']}: thumbnail download failed")
+    targets = rows[:limit]
+    with ThreadPoolExecutor(max_workers=DOWNLOAD_WORKERS) as pool:
+        results = list(pool.map(lambda r: _download_video(r, out_dir), targets))
+    for row, (name, warning) in zip(targets, results, strict=True):
+        if name:
+            row["Local File"] = name
+        if warning and warning not in warnings:
+            warnings.append(warning)
     return warnings
 
 
@@ -1089,7 +1377,7 @@ def _share(rows: list[dict], key: str, value: str = "yes") -> str:
     return f"{round(hits / len(rows) * 100)}%"
 
 
-def build_summary(topic: str, args, rows: list[dict], quota_units: int,
+def build_summary(topic: str, args, rows: list[dict], quota_used: str,
                   now: dt.datetime | None = None) -> list[tuple[str, object]]:
     now = now or dt.datetime.now()
     views = [int(_num(r.get("Views"))) for r in rows if r.get("Views") is not None]
@@ -1110,13 +1398,15 @@ def build_summary(topic: str, args, rows: list[dict], quota_units: int,
         filters += f", comments {args.comments}"
     if getattr(args, "hooks", None):
         filters += f", hooks {args.hooks}s"
+    if getattr(args, "transcribe", None):
+        filters += f", transcribe {args.transcribe}"
     top = rows[0] if rows else {}
     return [
         ("Topic", topic),
         ("Run date", now.strftime("%Y-%m-%d %H:%M")),
         ("Filters", filters),
         ("Videos", len(rows)),
-        ("Quota units used", quota_units),
+        ("Quota used", quota_used),
         ("Total views", sum(views)),
         ("Median views", int(statistics.median(views)) if views else 0),
         ("Mean views", int(statistics.mean(views)) if views else 0),
@@ -1420,8 +1710,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--hooks", type=float, nargs="?", const=15.0, default=0.0, metavar="SECONDS",
                    help="Use yt-dlp for hook transcript (first SECONDS, default 15), vertical, "
                         "replay heatmap, full transcript. No quota, slower.")
-    p.add_argument("--download", action="store_true",
-                   help="Download mp4s and thumbnails with yt-dlp into ./downloads")
+    p.add_argument("--download", type=int, nargs="?", const=0, default=None, metavar="N",
+                   help="Save thumbnails for every video and mp4s for the top N into ./downloads "
+                        "(all videos when N is omitted)")
+    p.add_argument("--transcribe", nargs="?", const="turbo", default=None, metavar="MODEL",
+                   help="Transcribe audio locally with Whisper for videos without caption "
+                        "transcripts (default model turbo, GPU recommended). Fills Hook, "
+                        "Transcript Words, and the Transcripts sheet. No quota, no caption requests.")
     p.add_argument("--dry-run", action="store_true", help="Fetch and print, write nothing")
     p.add_argument("--json", action="store_true", help="Also print rows as JSON")
     return p
@@ -1483,12 +1778,25 @@ def run(argv: list[str] | None = None) -> int:
             warnings.extend(w)
         if args.hooks:
             progress(f"probing {len(rows)} videos with yt-dlp for hooks and replay data")
-            transcript_rows, w = enrich_hooks(rows, args.hooks, progress, cache_dir=CACHE_DIR)
+            transcript_rows, w = enrich_hooks(rows, args.hooks, progress, cache_dir=CACHE_DIR,
+                                              transcribe_after=bool(args.transcribe))
             warnings.extend(w)
             rows = sort_rows(rows, args.sort)
-        if args.download and not args.dry_run:
-            progress(f"downloading {len(rows)} videos and thumbnails")
-            warnings.extend(download_videos(rows, Path.cwd() / "downloads"))
+        if args.download is not None and not args.dry_run:
+            n_videos = args.download if args.download > 0 else len(rows)
+            progress(f"downloading {len(rows)} thumbnails and {min(n_videos, len(rows))} videos")
+            warnings.extend(download_videos(rows, Path.cwd() / "downloads", n_videos))
+        if args.transcribe:
+            pending = sum(1 for r in rows if not r.get("Transcript Words"))
+            progress(f"transcribing {pending} videos locally with Whisper ({args.transcribe})")
+            try:
+                more, w = enrich_transcribe(
+                    rows, args.hooks or 15.0, Transcriber(args.transcribe),
+                    media_dir=Path.cwd() / "downloads", cache_dir=CACHE_DIR, progress=progress)
+                transcript_rows.extend(more)
+                warnings.extend(w)
+            except ScoutError as exc:
+                warnings.append(str(exc))
 
         print(print_summary(rows))
         print()
@@ -1498,25 +1806,25 @@ def run(argv: list[str] | None = None) -> int:
 
         if args.dry_run:
             progress(f"dry run, {len(rows)} rows fetched, nothing written. "
-                     f"Quota used: {quota.units} units.")
+                     f"Quota used: {quota.summary()}.")
         elif args.into:
             path, added, skipped = append_workbook(
                 rows, args.into, args.sort,
                 comment_rows=comment_rows, transcript_rows=transcript_rows)
             progress(f"appended {added} rows to {path} ({skipped} already present). "
-                     f"Quota used: {quota.units} units.")
+                     f"Quota used: {quota.summary()}.")
         else:
             path = write_workbook(
                 rows, args.out or default_out_path(topic),
                 channel_rows=build_channel_rows(rows),
                 comment_rows=comment_rows,
                 transcript_rows=transcript_rows,
-                summary=build_summary(topic, args, rows, quota.units),
+                summary=build_summary(topic, args, rows, quota.summary()),
             )
             sheets = [SHEET_NAME, CHANNELS_SHEET] + ([COMMENTS_SHEET] if comment_rows else []) \
                 + ([TRANSCRIPTS_SHEET] if transcript_rows else []) + [SUMMARY_SHEET]
             progress(f"wrote {len(rows)} rows to {path} (sheets: {', '.join(sheets)}). "
-                     f"Quota used: {quota.units} units.")
+                     f"Quota used: {quota.summary()}.")
         for w in warnings:
             print(f"scout: warning: {w}", file=sys.stderr)
         return EXIT_OK

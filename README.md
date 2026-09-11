@@ -7,8 +7,8 @@
 [![CI](https://github.com/AgriciDaniel/youtube-scout/actions/workflows/ci.yml/badge.svg)](https://github.com/AgriciDaniel/youtube-scout/actions/workflows/ci.yml)
 [![Claude Code Skill](https://img.shields.io/badge/Claude%20Code-Skill-blue)](https://claude.ai/claude-code)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-0.1.0-informational)](CHANGELOG.md)
-[![Tests](https://img.shields.io/badge/tests-48%20passing-brightgreen)](tests/)
+[![Version](https://img.shields.io/badge/version-0.2.0-informational)](CHANGELOG.md)
+[![Tests](https://img.shields.io/badge/tests-62%20passing-brightgreen)](tests/)
 [![Community](https://img.shields.io/badge/AI%20Marketing%20Hub-Pro%20community-purple)](https://www.skool.com/ai-marketing-hub-pro)
 
 **One topic in, one ranked YouTube research workbook out.** Type `/scout matcha recipe` in
@@ -16,8 +16,8 @@ Claude Code and get an `.xlsx` with the most relevant videos ranked by performan
 creators behind them, what the audience says in the comments, the opening lines that hooked
 viewers, and the moments people replay.
 
-> This repository is private for now. It is not affiliated with, sponsored by, or endorsed by
-> YouTube or Google. YouTube and Google product names are trademarks of their owners.
+> Not affiliated with, sponsored by, or endorsed by YouTube or Google. YouTube and Google product
+> names are trademarks of their owners.
 
 ## Why youtube-scout
 
@@ -39,7 +39,7 @@ viewers, and the moments people replay.
 | Channels | One row per creator in the sample: subscribers, channel totals, country, videos in sample, sample views, average engagement, best video. Your outreach list. |
 | Summary | Topic, filters, quota used, totals, median and mean views, Shorts share, paid promotion share, top channels, top tags, categories, languages, countries. |
 | Comments | With `--comments`: top N comments per video with likes and reply counts. |
-| Transcripts | With `--hooks`: hook text and full transcript per video. |
+| Transcripts | With `--hooks` or `--transcribe`: hook text and full transcript per video, with its source (captions or Whisper). |
 
 <p align="center">
   <img src="assets/sheet-example.webp" width="100%" alt="The Videos sheet from a /scout ai seo run opened in Google Sheets: 50 rows sorted by views with creator, handle, video link, views, likes, comments, engagement, duration, title, publish date, relevance rank, format, age, views per day, views per subscriber, channel URL, subscribers, channel totals, and country columns, with Channels and Summary tabs at the bottom.">
@@ -47,10 +47,7 @@ viewers, and the moments people replay.
 
 ## Installation
 
-### Which version are you installing?
-
-The repository is private. Installation requires access to `AgriciDaniel/youtube-scout`
-(`gh auth login` with an account that has been granted access).
+No GitHub account is needed to install.
 
 ### Manual install (Unix, macOS, Linux)
 
@@ -59,7 +56,7 @@ git clone https://github.com/AgriciDaniel/youtube-scout.git
 cd youtube-scout
 ./install.sh            # copies the skill to ~/.claude/skills/scout
 python3 -m pip install --user openpyxl
-python3 -m pip install --user yt-dlp    # optional, for --hooks and --download
+python3 -m pip install --user yt-dlp    # optional, for --hooks, --download, and --transcribe
 ```
 
 `./install.sh --target codex`, `--target agents`, `--target portable`, or `--target all`
@@ -92,6 +89,7 @@ printf 'YOUTUBE_API_KEY=...\n' > ~/.config/scout/.env && chmod 600 ~/.config/sco
 /scout matcha recipe
 /scout iced matcha latte --since month --length short --max 100
 /scout ai seo --comments --hooks
+/scout ai seo --comments --hooks --transcribe --download 10
 /scout matcha recipe --into OWT-Social-Ads.xlsx
 /scout matcha recipe --sort breakout --dry-run
 ```
@@ -102,7 +100,7 @@ Each run prints a top-10 table and writes `scout-<topic>-<date>.xlsx` in the cur
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--max N` | 50 | Videos to collect, 1 to 200. Each block of 50 costs 100 quota units. |
+| `--max N` | 50 | Videos to collect, 1 to 200. Each block of 50 uses one of your 100 daily searches. |
 | `--since` | any | `hour`, `today`, `week`, `month`, `year`, `any` |
 | `--length` | any | `short` (under 4 min), `medium` (4 to 20), `long` (over 20) |
 | `--sort` | views | `views`, `engagement`, `likes`, `recent`, `momentum` (views per day), `breakout` (views per subscriber) |
@@ -110,13 +108,14 @@ Each run prints a top-10 table and writes `scout-<topic>-<date>.xlsx` in the cur
 | `--hooks [SECONDS]` | off | yt-dlp probe: hook text (first SECONDS of captions, default 15), vertical, FPS, replay hotspots, chapters, full transcript. No quota. |
 | `--out PATH` | `./scout-<topic>-<date>.xlsx` | Write a new workbook |
 | `--into PATH` | off | Append into an existing workbook, dedup by video id, re-sort, backup first |
-| `--download` | off | Download mp4s and thumbnails with yt-dlp into `./downloads/` |
+| `--download [N]` | off | Save thumbnails for every video and mp4s for the top N (all when N is omitted) into `./downloads/` |
+| `--transcribe [MODEL]` | off | Transcribe audio locally with Whisper for videos without caption transcripts (default model `turbo`, GPU recommended). Fills Hook, Transcript Words, and the Transcripts sheet. No quota, no caption requests. |
 | `--dry-run` | off | Fetch and print only |
 | `--json` | off | Also print rows as JSON |
 
 ## Sample output
 
-`/scout ai seo`, 50 videos, 103 quota units:
+`/scout ai seo`, 50 videos, one search call:
 
 ```
  #        Views   Eng %     V/day   V/Sub      Len  Fmt   Handle               Title
@@ -135,7 +134,7 @@ subscriber 83). Those are the rows worth studying.
 
 ```
 topic
-  |  search.list (relevance, paginated, 100 units per 50)
+  |  search.list (relevance, paginated, 1 of 100 daily search calls per 50)
   v
 video ids
   |  videos.list (snippet, statistics, contentDetails, status, topicDetails,
@@ -146,6 +145,7 @@ video ids
 rows  --sort-->  Videos / Channels / Summary sheets
   |  --comments: commentThreads.list per video (1 unit each)
   |  --hooks:    yt-dlp -j per video, json3 captions, heatmap peaks (no quota, cached)
+  |  --transcribe: local Whisper on the downloaded file or fetched audio (no quota, cached)
   v
 scout-<topic>-<date>.xlsx   or   --into existing.xlsx
 ```
@@ -155,11 +155,17 @@ six hours. Format is Short when a video is 180 seconds or less and not confirmed
 
 ## Quota and limits
 
-- Default daily budget is 10,000 units and 100 search calls. A default run is about 103
-  units; adding `--comments` on 50 videos is about 153.
-- YouTube throttles caption downloads after bursts (HTTP 429). The skill paces requests,
-  retries with backoff, caches probes under `~/.cache/scout/` for 7 days, and stops trying
-  after one hard failure. Rerun the same command an hour later to fill the gaps.
+- Since June 2026 the API uses granular quota buckets: 100 `search.list` calls a day, plus
+  10,000 units a day for everything else. A default 50-video run uses 1 search call and
+  3 units; adding `--comments` adds 1 unit per video. The run prints what it used.
+- YouTube blocks caption downloads per IP after bursts (HTTP 429), and the block can last
+  several hours. The skill paces requests, retries with backoff, caches probes under
+  `~/.cache/scout/` for 7 days, and stops trying after one hard failure. `--transcribe` fills
+  the gaps by transcribing the audio locally with Whisper, which never touches the caption
+  endpoint. The Transcript Source column says which rows came from captions and which from
+  Whisper.
+- Full video downloads can be slow when YouTube throttles them. `--download 10` saves mp4s for
+  the top 10 only, plus thumbnails for every row.
 - yt-dlp breaks whenever YouTube changes something. `yt-dlp -U` usually fixes it within a day.
   Metadata columns still fill when captions fail.
 
@@ -189,7 +195,9 @@ so the repository ignores `*.xlsx` and you should not commit them anywhere.
 
 - Python 3.10 or newer, openpyxl.
 - A YouTube Data API v3 key.
-- yt-dlp on PATH for `--hooks` and `--download`.
+- yt-dlp on PATH for `--hooks`, `--download`, and `--transcribe`.
+- ffmpeg on PATH for `--download` (it merges video and audio) and for `--transcribe`.
+- For `--transcribe`: `openai-whisper` with a CUDA GPU (fast), or `faster-whisper` on CPU (slower).
 
 ## Uninstall
 

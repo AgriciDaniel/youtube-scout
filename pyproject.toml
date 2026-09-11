@@ -1,6 +1,6 @@
 [project]
 name = "youtube-scout"
-version = "0.1.0"
+version = "0.2.0"
 description = "Claude Code skill: one topic in, one ranked YouTube research workbook out. Videos, channels, comments, hooks, and replay hotspots via YouTube Data API v3 and yt-dlp."
 readme = "README.md"
 requires-python = ">=3.10"

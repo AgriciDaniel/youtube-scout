@@ -1,12 +1,11 @@
 # Contributing
 
-Thanks for helping improve youtube-scout. The repository is private for now, so contributions
-come from invited collaborators.
+Thanks for helping improve youtube-scout. Issues and pull requests are welcome.
 
 ## Ground rules
 
 - Keep the skill dependency-light: the standard library plus openpyxl. yt-dlp stays optional
-  and is only used behind `--hooks` and `--download`.
+  and is only used behind `--hooks`, `--download`, and `--transcribe`.
 - Never commit API keys, `.env` files, generated workbooks, downloaded media, or the probe
   cache. The `.gitignore` and the hygiene test enforce this; do not weaken them.
 - No em dashes anywhere: code, comments, docs, commit messages. Use commas, periods, colons,

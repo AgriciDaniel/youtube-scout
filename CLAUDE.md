@@ -17,4 +17,4 @@ Read `SKILL.md` for the runtime contract and `README.md` for the product view.
 - The API key comes from `YOUTUBE_API_KEY` or a key file the user names via `SCOUT_ENV_FILE`.
   Load the user's key file into the environment for the command; never copy the key into the
   repo or print it.
-- The repository is private. A visibility change is a separate, explicitly authorised step.
+- The repository is public. Never commit anything that should not be public.
