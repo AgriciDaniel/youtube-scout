@@ -1,0 +1,10 @@
+{
+  "events": [
+    {"tStartMs": 0, "dDurationMs": 3000, "segs": [{"utf8": "make it "}, {"utf8": "or buy it"}]},
+    {"tStartMs": 3000, "dDurationMs": 3000, "segs": [{"utf8": "\n"}]},
+    {"tStartMs": 6000, "dDurationMs": 4000, "segs": [{"utf8": "iced  matcha latte"}]},
+    {"tStartMs": 14999, "dDurationMs": 2000, "segs": [{"utf8": "at home"}]},
+    {"tStartMs": 15000, "dDurationMs": 5000, "segs": [{"utf8": "costs six dollars"}]},
+    {"tStartMs": 25000, "dDurationMs": 5000, "segs": [{"utf8": "worth it"}]}
+  ]
+}

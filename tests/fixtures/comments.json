@@ -1,0 +1,40 @@
+{
+  "items": [
+    {
+      "id": "c1",
+      "snippet": {
+        "videoId": "vid00000001",
+        "totalReplyCount": 4,
+        "canReply": true,
+        "topLevelComment": {
+          "id": "c1",
+          "snippet": {
+            "textDisplay": "Where do you buy your matcha?",
+            "textOriginal": "Where do you buy your matcha?",
+            "authorDisplayName": "Ana",
+            "likeCount": 12,
+            "publishedAt": "2026-03-02T09:00:00Z"
+          }
+        }
+      }
+    },
+    {
+      "id": "c2",
+      "snippet": {
+        "videoId": "vid00000001",
+        "totalReplyCount": 0,
+        "canReply": true,
+        "topLevelComment": {
+          "id": "c2",
+          "snippet": {
+            "textDisplay": "This whisk changed my mornings",
+            "textOriginal": "This whisk changed my mornings",
+            "authorDisplayName": "Ben",
+            "likeCount": 250,
+            "publishedAt": "2026-03-03T09:00:00Z"
+          }
+        }
+      }
+    }
+  ]
+}

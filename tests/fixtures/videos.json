@@ -1,0 +1,65 @@
+{
+  "items": [
+    {
+      "id": "vid00000001",
+      "snippet": {
+        "publishedAt": "2026-03-01T10:00:00Z",
+        "channelId": "chanA",
+        "title": "How to whisk matcha properly",
+        "description": "Full recipe at https://tealab.example/recipe and my whisk https://shop.example/whisk\nEnjoy!",
+        "channelTitle": "Tea Lab",
+        "tags": ["matcha", "Matcha Latte", "tea"],
+        "categoryId": "26",
+        "liveBroadcastContent": "none",
+        "defaultAudioLanguage": "en",
+        "thumbnails": {
+          "default": {"url": "https://i.ytimg.com/vi/vid00000001/default.jpg"},
+          "high": {"url": "https://i.ytimg.com/vi/vid00000001/hqdefault.jpg"}
+        }
+      },
+      "contentDetails": {"duration": "PT4M20S", "dimension": "2d", "definition": "hd", "caption": "true", "licensedContent": true, "projection": "rectangular"},
+      "status": {"uploadStatus": "processed", "privacyStatus": "public", "license": "youtube", "embeddable": true, "publicStatsViewable": true, "madeForKids": false, "containsSyntheticMedia": true},
+      "statistics": {"viewCount": "120000", "likeCount": "8000", "commentCount": "400"},
+      "topicDetails": {"topicCategories": ["https://en.wikipedia.org/wiki/Food", "https://en.wikipedia.org/wiki/Lifestyle_(sociology)"]},
+      "recordingDetails": {"locationDescription": "Kyoto, Japan", "location": {"latitude": 35.0116, "longitude": 135.7681}},
+      "paidProductPlacementDetails": {"hasPaidProductPlacement": true}
+    },
+    {
+      "id": "vid00000002",
+      "snippet": {
+        "publishedAt": "2026-05-15T08:30:00Z",
+        "channelId": "chanB",
+        "title": "Iced matcha latte in 30 seconds #shorts",
+        "description": "",
+        "channelTitle": "Quick Sips",
+        "categoryId": "22",
+        "liveBroadcastContent": "none",
+        "thumbnails": {
+          "default": {"url": "https://i.ytimg.com/vi/vid00000002/default.jpg"},
+          "maxres": {"url": "https://i.ytimg.com/vi/vid00000002/maxresdefault.jpg"}
+        }
+      },
+      "contentDetails": {"duration": "PT31S", "dimension": "2d", "definition": "sd", "caption": "false", "licensedContent": false, "regionRestriction": {"blocked": ["DE", "FR"]}},
+      "status": {"uploadStatus": "processed", "privacyStatus": "public", "license": "creativeCommon", "embeddable": false, "publicStatsViewable": true, "madeForKids": false},
+      "statistics": {"viewCount": "900000", "likeCount": "150000", "commentCount": "3000"},
+      "paidProductPlacementDetails": {"hasPaidProductPlacement": false}
+    },
+    {
+      "id": "vid00000003",
+      "snippet": {
+        "publishedAt": "2025-11-20T12:00:00Z",
+        "channelId": "chanC",
+        "title": "Matcha farm documentary",
+        "description": "A long film.",
+        "channelTitle": "Slow Films",
+        "categoryId": "99",
+        "liveBroadcastContent": "none",
+        "thumbnails": {"default": {"url": "https://i.ytimg.com/vi/vid00000003/default.jpg"}}
+      },
+      "contentDetails": {"duration": "P1DT2H", "regionRestriction": {"allowed": ["US"]}},
+      "status": {},
+      "statistics": {"viewCount": "5000", "likeCount": "900"},
+      "liveStreamingDetails": {"actualStartTime": "2025-11-20T12:00:00Z", "actualEndTime": "2025-11-21T14:00:00Z"}
+    }
+  ]
+}

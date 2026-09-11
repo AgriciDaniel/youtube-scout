@@ -1,0 +1,17 @@
+{
+  "items": [
+    {
+      "id": "chanA",
+      "snippet": {"title": "Tea Lab", "customUrl": "@tealab", "publishedAt": "2019-06-01T00:00:00Z", "country": "JP"},
+      "statistics": {"subscriberCount": "45000", "hiddenSubscriberCount": false, "videoCount": "150", "viewCount": "3000000"},
+      "topicDetails": {"topicCategories": ["https://en.wikipedia.org/wiki/Food"]},
+      "brandingSettings": {"channel": {"title": "Tea Lab", "keywords": "matcha tea \"green tea\" kyoto", "country": "JP"}}
+    },
+    {
+      "id": "chanB",
+      "snippet": {"title": "Quick Sips", "customUrl": "@quicksips", "publishedAt": "2023-01-10T00:00:00Z"},
+      "statistics": {"subscriberCount": "2000000", "hiddenSubscriberCount": true, "videoCount": "0", "viewCount": "0"},
+      "brandingSettings": {"channel": {"title": "Quick Sips"}}
+    }
+  ]
+}
