@@ -1,0 +1,36 @@
+# Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+build/
+dist/
+*.egg-info/
+
+# Secrets and local config: keys never live in this repo
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.secret
+token.json
+credentials.json
+client_secret*.json
+
+# Run output: workbooks hold third-party creator data, downloads hold media
+*.xlsx
+*.backup-*.xlsx
+.~lock*
+downloads/
+.cache/
+
+# Editor and OS cruft
+.DS_Store
+.directory
+.idea/
+.vscode/
+*.swp

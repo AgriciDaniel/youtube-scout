@@ -1,0 +1,37 @@
+name: Bug report
+description: Something in youtube-scout does not work as documented
+labels: ["bug"]
+body:
+  - type: input
+    id: command
+    attributes:
+      label: Command
+      description: The exact scout command, with the topic. Never include your API key.
+      placeholder: "/scout matcha recipe --since year --comments"
+    validations:
+      required: true
+  - type: input
+    id: exit
+    attributes:
+      label: Exit code and last stderr line
+      placeholder: "5, scout: YouTube request failed (500): ..."
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened
+    validations:
+      required: true
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: Output of `python3 --version`, `yt-dlp --version`, and the youtube-scout version from CHANGELOG.md
+      placeholder: "Python 3.12.4, yt-dlp 2026.08.19, youtube-scout 0.1.0"

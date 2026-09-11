@@ -1,0 +1,92 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.12", "3.14"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install
+        run: python -m pip install -r requirements.txt pytest
+      - name: Tests
+        run: python -m pytest
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: python -m pip install ruff
+      - name: Compile
+        run: python -m compileall -q scripts tests
+      - name: Ruff
+        run: ruff check .
+      - name: Shell syntax
+        run: bash -n install.sh && bash -n uninstall.sh
+
+  secret-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.12"
+      - name: Install detect-secrets
+        run: python -m pip install detect-secrets
+      - name: detect-secrets
+        run: git ls-files -z | xargs -0 detect-secrets-hook --baseline .secrets.baseline
+      - name: Credential shape gate (tracked files)
+        run: |
+          PATTERN='AIza[0-9A-Za-z_-]{35}|ghp_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{40,}|gh[ous]_[A-Za-z0-9]{36}|AKIA[0-9A-Z]{16}|GOCSPX-[A-Za-z0-9_-]{20,}|sk-(proj-)?[A-Za-z0-9]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}'
+          if git ls-files -z | xargs -0 grep -nIEH "$PATTERN" | grep -vE 'DUMMY|EXAMPLE|YOUR_|REDACTED|placeholder'; then
+            echo "::error::Potential leaked credentials in tracked files"
+            exit 1
+          fi
+          echo "Credential shape gate clean."
+      - name: Credential shape gate (full history)
+        run: |
+          PATTERN='AIza[0-9A-Za-z_-]{35}|ghp_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{40,}|gh[ous]_[A-Za-z0-9]{36}|AKIA[0-9A-Z]{16}|GOCSPX-[A-Za-z0-9_-]{20,}|sk-(proj-)?[A-Za-z0-9]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}'
+          if git log -p --all | grep -nE "$PATTERN" | grep -vE 'DUMMY|EXAMPLE|YOUR_|REDACTED|placeholder|PATTERN='; then
+            echo "::error::Potential leaked credentials in git history"
+            exit 1
+          fi
+          echo "History gate clean."
+
+  hygiene:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: python -m pip install pytest
+      - name: Repository hygiene
+        run: python -m pytest tests/test_repo_hygiene.py
+      - name: Installer smoke
+        run: |
+          export YOUTUBE_SCOUT_INSTALL_HOME="$(mktemp -d)"
+          ./install.sh --target all
+          test -f "$YOUTUBE_SCOUT_INSTALL_HOME/.claude/skills/scout/scripts/scout.py"
+          python3 "$YOUTUBE_SCOUT_INSTALL_HOME/.claude/skills/scout/scripts/scout.py" --help > /dev/null
+          ./uninstall.sh --target all
+          test ! -e "$YOUTUBE_SCOUT_INSTALL_HOME/.claude/skills/scout"

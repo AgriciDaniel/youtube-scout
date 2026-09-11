@@ -1,0 +1,22 @@
+{
+  "name": "youtube-scout",
+  "version": "0.1.0",
+  "description": "One topic in, one ranked YouTube research workbook out. Searches YouTube Data API v3, ranks videos by views, engagement, momentum, or breakout, and writes Videos, Channels, Summary, Comments, and Transcripts sheets with hooks and replay hotspots.",
+  "author": {
+    "name": "Daniel Agrici",
+    "url": "https://github.com/AgriciDaniel"
+  },
+  "repository": "https://github.com/AgriciDaniel/youtube-scout",
+  "license": "MIT",
+  "keywords": [
+    "youtube",
+    "youtube-data-api",
+    "research",
+    "creator-research",
+    "xlsx",
+    "claude-skill"
+  ],
+  "skills": [
+    "./SKILL.md"
+  ]
+}
