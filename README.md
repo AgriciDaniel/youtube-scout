@@ -41,6 +41,10 @@ viewers, and the moments people replay.
 | Comments | With `--comments`: top N comments per video with likes and reply counts. |
 | Transcripts | With `--hooks`: hook text and full transcript per video. |
 
+<p align="center">
+  <img src="assets/sheet-example.webp" width="100%" alt="The Videos sheet from a /scout ai seo run opened in Google Sheets: 50 rows sorted by views with creator, handle, video link, views, likes, comments, engagement, duration, title, publish date, relevance rank, format, age, views per day, views per subscriber, channel URL, subscribers, channel totals, and country columns, with Channels and Summary tabs at the bottom.">
+</p>
+
 ## Installation
 
 ### Which version are you installing?
