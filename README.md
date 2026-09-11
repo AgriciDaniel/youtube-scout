@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/banner.webp" width="100%" alt="YouTube Scout cover: the /scout AI SEO command returning a ranked table of top videos with views, likes, and engagement, captioned Find top videos. Get the details.">
+</p>
+
 # youtube-scout
 
 [![CI](https://github.com/AgriciDaniel/youtube-scout/actions/workflows/ci.yml/badge.svg)](https://github.com/AgriciDaniel/youtube-scout/actions/workflows/ci.yml)

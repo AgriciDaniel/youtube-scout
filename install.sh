@@ -22,7 +22,7 @@ main() {
     case "$1" in
       --target) target="$2"; shift 2 ;;
       --path) custom_path="$2"; target="custom"; shift 2 ;;
-      -h|--help) sed -n '2,12p' "${BASH_SOURCE[0]}"; exit 0 ;;
+      -h|--help) sed -n '2,11p' "${BASH_SOURCE[0]}"; exit 0 ;;
       *) echo "install.sh: unknown option $1" >&2; exit 1 ;;
     esac
   done
