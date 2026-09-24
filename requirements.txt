@@ -1,1 +1,13 @@
+# Python packages for scripts/scout.py: pip install -r requirements.txt
 openpyxl>=3.1.5,<4.0.0
+
+# Not installed by this file:
+#
+# yt-dlp is a separate command-line tool, used by --hooks, --transcribe, and --download.
+# Install it with `brew install yt-dlp` on macOS (bundles its own Python) or
+# `pipx install yt-dlp` elsewhere. Current yt-dlp needs Python 3.9+, so
+# `pip install yt-dlp` into an older python3 installs a stale release.
+#
+# Optional extras for --transcribe only, both need Python 3.9+:
+#   faster-whisper   (CPU)
+#   openai-whisper   (GPU, with a CUDA build of torch)

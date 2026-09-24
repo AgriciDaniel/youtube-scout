@@ -11,7 +11,8 @@ Pipeline (mirrors the YouTube Pro app's server/youtube.ts, then goes further):
   local Whisper        -> transcripts from the audio when captions are missing, --transcribe
 
 Sheets: Videos (OWT-Social-Ads layout plus extras), Channels, Summary, and with flags
-Comments and Transcripts. Only openpyxl is required beyond the standard library.
+Comments and Transcripts. Only openpyxl is required beyond the standard library; --hooks,
+--transcribe, and --download also call the yt-dlp command-line tool.
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ import datetime as dt
 import json
 import os
 import re
+import shutil
 import statistics
 import subprocess
 import sys
@@ -632,6 +634,27 @@ def probe_video(video_url: str, hook_seconds: float = 15.0,
         out["Transcript Words"] = len(full.split())
         out["Language"] = info.get("caption_lang") or ""
     return out
+
+
+def ytdlp_install_command(platform: str | None = None) -> str:
+    """Homebrew's yt-dlp bundles its own Python. Current yt-dlp needs Python 3.9+, so pip
+    into an older python3 would install a stale release."""
+    return "brew install yt-dlp" if (platform or sys.platform) == "darwin" else "pipx install yt-dlp"
+
+
+def require_ytdlp(flags: list[str], which=None) -> None:
+    """Stop before any API call when a flag needs the yt-dlp CLI and it is not on PATH.
+
+    Without this every per-video probe fails on its own and the run prints one warning per
+    video, then writes a workbook with empty hook columns.
+    """
+    which = which or shutil.which
+    if not flags or which("yt-dlp"):
+        return
+    needs = " and ".join(flags)
+    raise ScoutError(
+        f"yt-dlp is not installed or not on PATH (needed by {needs}). Install it with: "
+        f"{ytdlp_install_command()}, or rerun without {needs}. No quota was used.", EXIT_FILE)
 
 
 def _run_ytdlp_json(video_url: str) -> dict | None:
@@ -1742,6 +1765,8 @@ def run(argv: list[str] | None = None) -> int:
         print(f"scout: {msg}", file=sys.stderr, flush=True)
 
     try:
+        require_ytdlp([flag for flag, on in (("--hooks", args.hooks),
+                                             ("--transcribe", args.transcribe)) if on])
         api_key = load_api_key()
         quota = Quota()
         progress(f"searching YouTube for \"{topic}\" (max {args.max}, since {args.since}, "
