@@ -25,11 +25,26 @@ same Bash call) rather than copying the key anywhere. Never echo the key. The ru
 progress lines to stderr; a full run with `--hooks` on 50 videos takes a few minutes because
 yt-dlp probes each video, so allow a long Bash timeout.
 
-If the script reports that openpyxl is missing, run once:
+Setup, once per machine:
 
-```bash
-pip install -r "${CLAUDE_SKILL_DIR}/requirements.txt" --quiet
-```
+- **openpyxl** is the only Python package the script needs. If the script reports that it is
+  missing, run once:
+
+  ```bash
+  pip install -r "${CLAUDE_SKILL_DIR}/requirements.txt" --quiet
+  ```
+
+- **yt-dlp** is a separate command-line tool, not a Python requirement, and requirements.txt
+  does not install it. `--hooks`, `--transcribe`, and `--download` need it on PATH. Install it
+  with `brew install yt-dlp` on macOS (Homebrew's build bundles its own Python) or
+  `pipx install yt-dlp` elsewhere. Do not `pip install yt-dlp` into a `python3` older than 3.9:
+  current yt-dlp needs 3.9+, so pip there installs a stale release. When `--hooks` or
+  `--transcribe` is set and yt-dlp is missing, the script stops before any API call with exit
+  code 6 and prints the install command.
+- **faster-whisper** (CPU) or **openai-whisper** (GPU) is an optional extra, needed only for
+  `--transcribe`. Both need Python 3.9 or newer. Check `python3 --version` first; if it is older,
+  install the extra and openpyxl under a newer interpreter (Homebrew's, for example) and run the
+  script with that interpreter instead of `python3`.
 
 ## Flags
 
@@ -81,7 +96,7 @@ replay heatmap from `--hooks` is the closest public proxy for retention.
 | 3 | quota exhausted | the 100 daily searches or 10,000 daily units are used up; they reset at midnight Pacific |
 | 4 | invalid API key | check the `YOUTUBE_API_KEY` value in the key file |
 | 5 | other API or network error | show the message, suggest retry |
-| 6 | file error | the `--into` file is missing or openpyxl is not installed |
+| 6 | file or dependency error | the `--into` file is missing, openpyxl is not installed, or yt-dlp is not on PATH for `--hooks` or `--transcribe`. For yt-dlp, relay the install command from the message (`brew install yt-dlp` on macOS, `pipx install yt-dlp` elsewhere); the run stopped before searching, so no quota was spent |
 
 ## Sheet layout
 

@@ -837,3 +837,44 @@ def test_cli_transcribe_flag():
     assert args.transcribe == "turbo"
     assert scout.build_parser().parse_args(["matcha", "--transcribe", "small"]).transcribe == "small"
     assert scout.build_parser().parse_args(["matcha"]).transcribe is None
+
+
+# --------------------------------------------------------------------------- #
+# yt-dlp preflight
+# --------------------------------------------------------------------------- #
+
+def test_require_ytdlp_raises_before_any_api_call():
+    """A missing yt-dlp must stop the run, not fail once per video afterwards."""
+    looked_for = []
+
+    def missing(name):
+        looked_for.append(name)
+        return None
+
+    with pytest.raises(scout.ScoutError) as exc:
+        scout.require_ytdlp(["--hooks"], which=missing)
+    assert exc.value.code == scout.EXIT_FILE
+    assert "yt-dlp" in str(exc.value)
+    assert "--hooks" in str(exc.value)
+    assert looked_for == ["yt-dlp"]
+
+
+def test_require_ytdlp_names_every_flag_that_needs_it():
+    with pytest.raises(scout.ScoutError) as exc:
+        scout.require_ytdlp(["--hooks", "--transcribe"], which=lambda name: None)
+    message = str(exc.value)
+    assert "--hooks and --transcribe" in message
+
+
+def test_require_ytdlp_passes_when_installed_or_unused():
+    scout.require_ytdlp(["--hooks"], which=lambda name: "/opt/homebrew/bin/yt-dlp")
+    scout.require_ytdlp([], which=lambda name: None)
+
+
+@pytest.mark.parametrize("platform,expected", [
+    ("darwin", "brew install yt-dlp"),
+    ("linux", "pipx install yt-dlp"),
+    ("win32", "pipx install yt-dlp"),
+])
+def test_ytdlp_install_command(platform, expected):
+    assert scout.ytdlp_install_command(platform) == expected

@@ -3,6 +3,19 @@
 All notable changes to youtube-scout are recorded here. The format follows Keep a Changelog
 and the project uses semantic versioning.
 
+## Unreleased
+
+### Added
+
+- yt-dlp preflight: `--hooks` and `--transcribe` now check that the yt-dlp command-line tool is
+  on PATH before the first API call, and exit 6 with the platform's install command when it is
+  missing. Previously the search ran first and every per-video probe failed on its own, spending
+  quota and writing a workbook with empty hook columns.
+
+### Changed
+
+- Exit code 6 covers a missing dependency as well as a file error. SKILL.md documents both.
+
 ## 0.2.0 - 2026-09-11
 
 ### Added
